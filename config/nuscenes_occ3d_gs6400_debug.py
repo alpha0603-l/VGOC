@@ -93,8 +93,6 @@ loss = dict(
 
         dict(
             type='OccupancyLoss',
-            # BaseLoss and OccupancyLoss each apply this configured weight.
-            # sqrt(0.30) therefore gives the previous V24-I effective weight 0.30.
             weight=0.54772256,
             empty_label=17,
             num_classes=18,
