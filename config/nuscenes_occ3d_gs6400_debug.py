@@ -38,8 +38,8 @@ optimizer = dict(
     ),
 )
 grad_max_norm = 35
-max_epochs = 24  # keep the same 24-epoch LR schedule; epoch 4 is the quick-screen checkpoint
-eval_every_epochs = 4  # quick screen at epoch 4 while preserving the 24-epoch schedule
+max_epochs = 20 
+eval_every_epochs = 4
 find_unused_parameters = True
 
 aux_loss_debug = dict(
