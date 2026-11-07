@@ -1,1 +1,1 @@
-# VAGOR-Occ
+# VGOC
