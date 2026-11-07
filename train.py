@@ -13,7 +13,6 @@ from mmseg.models import build_segmentor
 from timm.scheduler import CosineLRScheduler, MultiStepLRScheduler
 import json
 
-# 中文注释：训练脚本只使用本地日志、TensorBoard 和 eval 文件，不依赖任何外部实验平台。
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -32,7 +31,6 @@ def is_main_process():
 
 
 def scalar_value(value):
-    # 多卡安全日志：把 Tensor/NumPy 标量转成 Python float，只在 rank0 写日志/TensorBoard。
     if isinstance(value, torch.Tensor):
         return float(value.detach().float().cpu().item())
     if isinstance(value, np.ndarray):
@@ -41,7 +39,6 @@ def scalar_value(value):
 
 
 def tb_add_scalar(writer, tag, value, step):
-    # 中文注释：用 TensorBoard 记录训练/验证指标；写入失败不影响训练主流程。
     if writer is None:
         return
     try:
@@ -85,12 +82,6 @@ def format_aux_values(prefix, mapping, keys):
 
 
 def build_loss_input_from_result(result_dict, metas, loss_input_convertion):
-    """Build MultiLoss input and keep auxiliary scalar losses connected.
-
-    Some experimental modules, such as Box-Hypothesis Mamba, produce scalar
-    losses inside the model forward.  This helper makes sure those tensors are
-    present in the loss input even when an old config copy misses the key.
-    """
     loss_input = {'metas': metas}
     for loss_input_key, loss_input_val in loss_input_convertion.items():
         if loss_input_val in result_dict:
@@ -102,11 +93,6 @@ def build_loss_input_from_result(result_dict, metas, loss_input_convertion):
 
 
 def maybe_add_aux_loss_fallback(loss, loss_dict, result_dict, enabled=True):
-    """Fallback-add BoxHyp loss if MultiLoss did not consume it.
-
-    Returns:
-        loss, loss_dict, manual_added
-    """
     manual_added = False
     if not bool(enabled):
         return loss, loss_dict, manual_added
@@ -201,7 +187,6 @@ def _debug_summarize_one(value, max_items=6):
 
 
 def _format_gt_data_debug(data, forward_step, show_all_keys=False):
-    """Format GT/debug keys currently present in the dataloader batch."""
     if not isinstance(data, dict):
         return f'[GT DATA DEBUG][train] forward_step={forward_step}, data_type={type(data).__name__}'
     candidate_keys = [
@@ -229,14 +214,12 @@ def _format_gt_data_debug(data, forward_step, show_all_keys=False):
 
 
 def setup_runtime_env():
-    """Runtime defaults that make DDP interruption and CUDA errors easier to handle."""
     os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING", "1")
     os.environ.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
     os.environ.setdefault("NCCL_BLOCKING_WAIT", "0")
 
 
 def cleanup_distributed():
-    """Best-effort cleanup. Safe to call for single GPU and DDP."""
     try:
         if dist.is_available() and dist.is_initialized():
             try:
@@ -252,11 +235,6 @@ def cleanup_distributed():
 
 
 def move_to_cuda(obj, non_blocking=True):
-    """Move nested tensors/lists/dicts to current CUDA device.
-
-    This keeps variable-length point clouds as lists while moving their tensor
-    elements to CUDA, which is required for per-GPU batch_size > 1.
-    """
     if isinstance(obj, torch.Tensor):
         return obj.cuda(non_blocking=non_blocking)
     if isinstance(obj, dict):
@@ -269,7 +247,6 @@ def move_to_cuda(obj, non_blocking=True):
 
 
 def reduce_sum_count(local_sum, local_count, device=None):
-    # DDP 下聚合各 rank 的验证 loss，避免只记录 rank0 子集的均值。
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     stats = torch.tensor([float(local_sum), float(local_count)], device=device, dtype=torch.float64)
@@ -280,7 +257,6 @@ def reduce_sum_count(local_sum, local_count, device=None):
 
 
 def save_eval_summary(work_dir, epoch, miou, iou2, val_loss, metric):
-    # 中文注释：自动保存每轮 eval 结果，方便离线追踪训练。
     eval_dir = osp.join(work_dir, "eval")
     os.makedirs(eval_dir, exist_ok=True)
     class_iou = getattr(metric, "last_ious", None)
@@ -321,29 +297,14 @@ def save_eval_summary(work_dir, epoch, miou, iou2, val_loss, metric):
 
 
 def main(local_rank, args):
-    # global settings
     set_random_seed(args.seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
-
-    # load config
     cfg = Config.fromfile(args.py_config)
-    cfg.work_dir = args.work_dir
-    # Make relative visualization output directories land under the active work_dir.
     os.environ["GSF_WORK_DIR"] = str(args.work_dir)
-
-    # Evaluation cadence interface:
-    #   config: eval_every_epochs = N
-    #   CLI override: --eval-every-epochs N
-    # N=1 means evaluate every epoch; N=2 means every 2 epochs; N<=0 disables eval.
     if args.eval_every_epochs is not None:
         cfg.eval_every_epochs = int(args.eval_every_epochs)
     cfg.eval_every_epochs = int(cfg.get('eval_every_epochs', 1))
-
-    # init DDP
-    # 中文注释：
-    # 推荐双卡使用 torchrun 启动，避免 torch.multiprocessing.spawn 在 Ctrl+C 时卡在 join。
-    # 普通 python train.py 即使看到多张 GPU，也只跑单进程 cuda:0。
     setup_runtime_env()
     env_world_size = int(os.environ.get("WORLD_SIZE", "1"))
     env_local_rank = int(os.environ.get("LOCAL_RANK", str(local_rank)))
@@ -366,7 +327,7 @@ def main(local_rank, args):
         if torch.cuda.is_available():
             torch.cuda.set_device(0)
 
-    main_process = is_main_process()  # 中文注释：统一判断当前进程是否为主进程，只有主进程写日志/TensorBoard/保存评估文件。
+    main_process = is_main_process()
     
     if main_process:
         os.makedirs(args.work_dir, exist_ok=True)
@@ -414,7 +375,6 @@ def main(local_rank, args):
     if main_process:
         logger.info('done ddp model')
 
-    # Use get_dataloader to get train and val dataloader respectively from the config
     train_dataset_loader, val_dataset_loader = get_dataloader(
         cfg.train_dataset_config,
         cfg.val_dataset_config,
@@ -423,7 +383,6 @@ def main(local_rank, args):
         dist=distributed,
         iter_resume=args.iter_resume)
 
-    # get optimizer, loss, scheduler
     optimizer = build_optim_wrapper(my_model, cfg.optimizer)
     loss_func = OPENOCC_LOSS.build(cfg.loss).cuda()
     max_num_epochs = cfg.max_epochs
@@ -499,7 +458,7 @@ def main(local_rank, args):
     first_run = True
     grad_accumulation = args.gradient_accumulation
     grad_norm = 0
-    best_miou = -1.0  # 中文注释：在本地保存最佳 mIoU 对应的 checkpoint。
+    best_miou = -1.0 
     from misc.metric_util import MeanIoU
     miou_metric = MeanIoU(
         list(range(1, 17)),
@@ -568,8 +527,6 @@ def main(local_rank, args):
                 input_dpt = data.pop('dpt')
             else:
                 input_dpt = None
-
-            # DPT debug is now controlled inside the model config (dpt_debug).
             if 'anchor_points' in data:
                 input_anchor_points = data.pop('anchor_points')
             else:
@@ -743,8 +700,6 @@ def main(local_rank, args):
                     input_anchor_points = None
                 
                 with torch.cuda.amp.autocast(amp):
-                    # Pass global_iter during eval as well so config-driven debug/visualizers
-                    # do not silently skip when validation runs immediately after training.
                     result_dict = my_model(
                         imgs=input_imgs,
                         points=input_points,
@@ -754,20 +709,11 @@ def main(local_rank, args):
                         metas=data,
                         global_iter=global_iter + i_iter_val,
                     )
-
-                    # Keep eval loss-input construction consistent with training.
-                    # Some auxiliary losses (for example loss_boxhyp) are only produced
-                    # during training or only when the corresponding proposal module is enabled.
-                    # Direct indexing result_dict[result_key] makes eval crash when the aux key
-                    # is absent, even though occupancy prediction / mIoU are valid.
                     loss_input = build_loss_input_from_result(
                         result_dict=result_dict,
                         metas=data,
                         loss_input_convertion=cfg.loss_input_convertion,
                     )
-                    # If the config still contains ScalarTensorLoss(input_key='loss_boxhyp')
-                    # but eval forward does not return loss_boxhyp, feed an explicit zero scalar
-                    # so validation loss can be computed without changing occupancy metrics.
                     if 'loss_boxhyp' in cfg.loss_input_convertion and 'loss_boxhyp' not in loss_input:
                         ref = result_dict.get('pred_occ', None)
                         if isinstance(ref, (list, tuple)) and len(ref) > 0 and isinstance(ref[-1], torch.Tensor):
@@ -778,11 +724,6 @@ def main(local_rank, args):
                             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
                         loss_input['loss_boxhyp'] = torch.zeros((), device=device, dtype=torch.float32)
                     loss, loss_dict = loss_func(loss_input)
-
-                # During training, the joint mask is applied in the loss function (ignored class + invisible class)
-                # And also, the empty label 17 is also ignored in loss computation.
-                # However, during evaluation, the joint mask is not applied!
-                # Since during evaluation, we want to keep the ignored class but not the invisible class, so we have to apply the invisible mask here.
                 occ3d_mask_camera_all = data.get('occ3d_mask_camera', None)
                 if occ3d_mask_camera_all is not None:
                     occ3d_mask_camera_all = occ3d_mask_camera_all.flatten(1)
@@ -864,7 +805,6 @@ if __name__ == '__main__':
         default=None,
         help='Override config eval_every_epochs. 1=evaluate every epoch, 2=every two epochs, <=0=disable evaluation.',
     )
-    # 中文注释：不再提供外部实验平台参数，日志全部写入本地文件和 TensorBoard。
     args = parser.parse_args()
 
     def _handle_signal(signum, frame):
@@ -894,9 +834,6 @@ if __name__ == '__main__':
             cleanup_distributed()
             raise
     else:
-        # 中文注释：
-        # 不再因为可见 GPU 数量大于 1 就自动 torch.multiprocessing.spawn。
-        # 双卡请用 torchrun；普通 python train.py 始终单进程运行，避免 Ctrl+C 卡死。
         print(args)
         if ngpus > 1:
             print(
